@@ -126,10 +126,13 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-pub fn register_power_state_change_callback(cb: OnPowerStateChange) -> Result<Guard, crate::Error> {
+pub fn register_power_state_change_callback<F>(cb: F) -> Result<Guard, crate::Error>
+where
+    F: Fn(Result<Status, crate::Error>) + Send + Sync + 'static,
+{
     let (tx, rx) = oneshot::channel();
     std::thread::spawn(move || {
-        match create_message_only_window(cb) {
+        match create_message_only_window(Box::new(cb)) {
             Ok(guard) => {
                 let _ = tx.send(Ok(guard));
             }

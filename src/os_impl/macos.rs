@@ -90,11 +90,17 @@ unsafe extern "C-unwind" fn on_power_state_change(context: *mut c_void) {
     unsafe { ((*context).callback)(get_current_power_state()) };
 }
 
-pub fn register_power_state_change_callback(
+// TODO: implement LPM callback support?
+pub fn register_power_state_change_callback<F>(
     mtm: MainThreadMarker,
-    cb: crate::OnPowerStateChange,
-) -> Result<Guard, crate::Error> {
-    let context = Box::new(Context { callback: cb });
+    cb: F,
+) -> Result<Guard, crate::Error>
+where
+    F: Fn(Result<Status, crate::Error>) + Send + Sync + 'static,
+{
+    let context = Box::new(Context {
+        callback: Box::new(cb),
+    });
     unsafe {
         let run_loop = CFRunLoop::current().ok_or(Error::MissingRunLoop)?;
         let context_ptr = Box::into_raw(context);

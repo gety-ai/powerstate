@@ -4,12 +4,9 @@ use powerstate::register_power_state_change_callback;
 
 fn main() {
     let mtm = MainThreadMarker::new().unwrap();
-    let guard = register_power_state_change_callback(
-        mtm,
-        Box::new(|status| {
-            println!("{:?}", status);
-        }),
-    )
+    let guard = register_power_state_change_callback(mtm, |status| {
+        println!("{:?}", status);
+    })
     .unwrap();
 
     CFRunLoop::run();

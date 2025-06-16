@@ -21,7 +21,7 @@ pub struct Status {
     pub power_saving_mode: bool,
 }
 
-pub type OnPowerStateChange = Box<dyn Fn(Result<Status, Error>) + Send + Sync>;
+type OnPowerStateChange = Box<dyn Fn(Result<Status, Error>) + Send + Sync>;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub enum PowerState {
