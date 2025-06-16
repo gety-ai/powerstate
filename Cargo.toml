@@ -8,6 +8,11 @@ name = "test_macos"
 path = "src/examples/test_macos.rs"
 harness = false
 
+[[example]]
+name = "test_windows"
+path = "src/examples/test_windows.rs"
+harness = false
+
 [dependencies]
 log = "0.4"
 thiserror = "2"

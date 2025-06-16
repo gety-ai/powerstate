@@ -38,6 +38,6 @@ mod tests {
     #[test]
     fn test_get_current_power_state() {
         let status = get_current_power_state().unwrap();
-        println!("{:?}", status);
+        println!("{status:#?}");
     }
 }
