@@ -3,10 +3,78 @@
 version = 4
 
 [[package]]
+name = "bitflags"
+version = "2.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b8e56985ec62d17e9c1001dc89c88ecd7dc08e47eba5ec7c29c7b5eeecde967"
+
+[[package]]
+name = "block2"
+version = "0.6.1"
+source = "git+https://github.com/gety-ai/objc2?rev=030902d#030902d2fed0862b86b9f709ef77f6fc460f8f38"
+dependencies = [
+ "objc2",
+]
+
+[[package]]
+name = "dispatch2"
+version = "0.3.0"
+source = "git+https://github.com/gety-ai/objc2?rev=030902d#030902d2fed0862b86b9f709ef77f6fc460f8f38"
+dependencies = [
+ "bitflags",
+ "block2",
+ "objc2",
+]
+
+[[package]]
+name = "libc"
+version = "0.2.173"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8cfeafaffdbc32176b64fb251369d52ea9f0a8fbc6f8759edffef7b525d64bb"
+
+[[package]]
 name = "log"
 version = "0.4.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13dc2df351e3202783a1fe0d44375f7295ffb4049267b0f3018346dc122a1d94"
+
+[[package]]
+name = "objc2"
+version = "0.6.1"
+source = "git+https://github.com/gety-ai/objc2?rev=030902d#030902d2fed0862b86b9f709ef77f6fc460f8f38"
+dependencies = [
+ "objc2-encode",
+]
+
+[[package]]
+name = "objc2-core-foundation"
+version = "0.3.1"
+source = "git+https://github.com/gety-ai/objc2?rev=030902d#030902d2fed0862b86b9f709ef77f6fc460f8f38"
+dependencies = [
+ "bitflags",
+ "block2",
+ "dispatch2",
+ "libc",
+ "objc2",
+]
+
+[[package]]
+name = "objc2-encode"
+version = "4.1.0"
+source = "git+https://github.com/gety-ai/objc2?rev=030902d#030902d2fed0862b86b9f709ef77f6fc460f8f38"
+
+[[package]]
+name = "objc2-io-kit"
+version = "0.3.1"
+source = "git+https://github.com/gety-ai/objc2?rev=030902d#030902d2fed0862b86b9f709ef77f6fc460f8f38"
+dependencies = [
+ "bitflags",
+ "block2",
+ "dispatch2",
+ "libc",
+ "objc2",
+ "objc2-core-foundation",
+]
 
 [[package]]
 name = "oneshot"
@@ -19,6 +87,9 @@ name = "powerstate"
 version = "0.1.0"
 dependencies = [
  "log",
+ "objc2",
+ "objc2-core-foundation",
+ "objc2-io-kit",
  "oneshot",
  "thiserror",
  "windows",

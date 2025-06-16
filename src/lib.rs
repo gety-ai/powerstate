@@ -9,18 +9,21 @@ pub enum Error {
     Windows(#[from] windows::core::Error),
 }
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Status {
     pub power_state: PowerState,
     /// Whether the system is in power saving mode.
-    /// 
+    ///
     /// In macos, this also called `Low Power Mode`
     pub power_saving_mode: bool,
 }
 
 pub type OnPowerStateChange = Box<dyn Fn(Result<Status, Error>) + Send + Sync>;
 
+#[derive(Debug, Default, Clone, Copy)]
 pub enum PowerState {
     Battery,
     AC,
+    #[default]
     Unknown,
 }

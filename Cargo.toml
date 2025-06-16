@@ -15,3 +15,9 @@ windows = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
 ] }
+
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { git = "https://github.com/gety-ai/objc2", rev = "030902d" }
+objc2-core-foundation = { git = "https://github.com/gety-ai/objc2", rev = "030902d" }
+objc2-io-kit = { git = "https://github.com/gety-ai/objc2", rev = "030902d" }
