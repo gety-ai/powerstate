@@ -1,8 +1,24 @@
+use std::ffi::c_void;
+
 use crate::Status;
-use objc2_core_foundation::{CFDictionary, CFNumber, CFRetained, CFString, CFType};
+
+use objc2::MainThreadMarker;
+use objc2_core_foundation::{
+    CFDictionary, CFNumber, CFRetained, CFRunLoop, CFRunLoopSource, CFString, CFType,
+    kCFRunLoopDefaultMode,
+};
 use objc2_io_kit::{
     self, IOPSCopyPowerSourcesInfo, IOPSCopyPowerSourcesList, IOPSGetPowerSourceDescription,
+    IOPSNotificationCreateRunLoopSource,
 };
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("Failed to create run loop source")]
+    FailedToCreateRunLoopSource,
+    #[error("Missing run loop")]
+    MissingRunLoop,
+}
 
 fn get_power_source_state() -> Option<Status> {
     let mut status = Status {
@@ -46,18 +62,49 @@ fn get_power_source_state() -> Option<Status> {
     Some(status)
 }
 
+pub struct Guard {
+    _mtm: MainThreadMarker,
+    source: CFRetained<CFRunLoopSource>,
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(run_loop) = CFRunLoop::current() {
+                run_loop.remove_source(Some(&self.source), kCFRunLoopDefaultMode);
+            }
+        }
+    }
+}
+
+struct Context {
+    callback: crate::OnPowerStateChange,
+}
+
 pub fn get_current_power_state() -> Result<Status, crate::Error> {
     Ok(get_power_source_state().unwrap_or_default())
 }
 
+unsafe extern "C-unwind" fn on_power_state_change(context: *mut c_void) {
+    let context = context as *mut Context;
+    unsafe { ((*context).callback)(get_current_power_state()) };
+}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub fn register_power_state_change_callback(
+    mtm: MainThreadMarker,
+    cb: crate::OnPowerStateChange,
+) -> Result<Guard, crate::Error> {
+    let context = Box::new(Context { callback: cb });
+    unsafe {
+        let run_loop = CFRunLoop::current().ok_or(Error::MissingRunLoop)?;
+        let context_ptr = Box::into_raw(context);
+        let source = IOPSNotificationCreateRunLoopSource(
+            Some(on_power_state_change),
+            context_ptr as *mut c_void,
+        )
+        .ok_or(Error::FailedToCreateRunLoopSource)?;
 
-    #[test]
-    fn test_get_current_power_state() {
-        let status = get_current_power_state().unwrap();
-        println!("{:?}", status);
+        run_loop.add_source(Some(&source), kCFRunLoopDefaultMode);
+        Ok(Guard { _mtm: mtm, source })
     }
 }

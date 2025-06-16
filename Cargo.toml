@@ -3,6 +3,11 @@ name = "powerstate"
 version = "0.1.0"
 edition = "2024"
 
+[[example]]
+name = "test_macos"
+path = "src/examples/test_macos.rs"
+harness = false
+
 [dependencies]
 log = "0.4"
 thiserror = "2"

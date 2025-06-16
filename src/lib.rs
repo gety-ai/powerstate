@@ -7,6 +7,9 @@ pub enum Error {
     #[cfg(target_os = "windows")]
     #[error(transparent)]
     Windows(#[from] windows::core::Error),
+    #[cfg(target_os = "macos")]
+    #[error(transparent)]
+    Macos(#[from] MacosError),
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -26,4 +29,15 @@ pub enum PowerState {
     AC,
     #[default]
     Unknown,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_current_power_state() {
+        let status = get_current_power_state().unwrap();
+        println!("{:?}", status);
+    }
 }
