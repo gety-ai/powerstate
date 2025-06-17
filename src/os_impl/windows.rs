@@ -41,6 +41,10 @@ impl Drop for Guard {
 
 const CLASS: PCWSTR = w!("PowerSink");
 
+struct Context {
+    callback: OnPowerStateChange,
+}
+
 fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<Guard> {
     let hinst = unsafe { GetModuleHandleW(None)? };
     let wc = WNDCLASSW {
@@ -50,8 +54,8 @@ fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<G
         ..Default::default()
     };
 
-    let cb = Box::new(cb);
-    let cb_ptr = Box::into_raw(cb);
+    let ctx = Box::new(Context { callback: cb });
+    let ctx_ptr = Box::into_raw(ctx);
 
     let hwnd = unsafe {
         let ret = RegisterClassW(&wc);
@@ -70,7 +74,7 @@ fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<G
             Some(HWND_MESSAGE),
             None,
             Some(hinst.into()),
-            Some(cb_ptr as *const _),
+            Some(ctx_ptr as *const _),
         )?
     };
 
@@ -103,19 +107,23 @@ pub fn get_current_power_state() -> Result<Status, crate::Error> {
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    log::debug!("wnd_proc: {msg:#x}");
     match msg {
         WM_CREATE => unsafe {
             let createstruct = &*(lparam.0 as *const CREATESTRUCTW);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, createstruct.lpCreateParams as _);
         },
         WM_POWERBROADCAST => unsafe {
-            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Box<OnPowerStateChange>;
-            let status = get_current_power_state();
-
-            (*ptr)(status);
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Context;
+            if ptr.is_null() {
+                log::error!("GetWindowLongPtrW returned null");
+            } else {
+                let status = get_current_power_state();
+                ((*ptr).callback)(status);
+            }
         },
         WM_DESTROY => unsafe {
-            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Box<OnPowerStateChange>;
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Context;
             if !ptr.is_null() {
                 let _ = Box::from_raw(ptr);
             }
