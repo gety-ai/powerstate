@@ -10,6 +10,9 @@ pub enum Error {
     #[cfg(target_os = "macos")]
     #[error(transparent)]
     Macos(#[from] MacosError),
+    #[cfg(target_os = "linux")]
+    #[error("Linux is not supported")]
+    Linux,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
