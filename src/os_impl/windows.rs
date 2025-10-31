@@ -60,7 +60,7 @@ fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<G
     let hwnd = unsafe {
         let ret = RegisterClassW(&wc);
         if ret == 0 {
-            Err(windows::core::Error::from_win32())?;
+            Err(windows::core::Error::from_thread())?;
         }
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
