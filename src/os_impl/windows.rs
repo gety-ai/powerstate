@@ -24,11 +24,13 @@ use crate::{
     EstimatedTimeRemaining, OnPowerStateChange, PowerState, Status, batteries::get_batteries,
 };
 
+// Ref: https://learn.microsoft.com/en-us/windows/win32/power/power-setting-guids
 const GUID_ACDC_POWER_SOURCE: &str = "5D3E9A59-E9D5-4B00-A6BD-FF34FF516548";
+const GUID_BATTERY_PERCENTAGE_REMAINING: &str = "A7AD8041-B45A-4CAE-87A3-EECBB468A9E1";
 
 pub struct Guard {
     hwnd: HWND,
-    token: Option<Owned<HPOWERNOTIFY>>,
+    tokens: Vec<Owned<HPOWERNOTIFY>>,
 }
 
 unsafe impl Send for Guard {}
@@ -36,7 +38,7 @@ unsafe impl Sync for Guard {}
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        let _ = self.token.take();
+        self.tokens.clear();
         unsafe {
             let _ = PostMessageW(Some(self.hwnd), WM_DESTROY, WPARAM(0), LPARAM(0));
         };
@@ -82,15 +84,22 @@ fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<G
         )?
     };
 
+    let mut tokens = Vec::new();
+
+    // Register AC/DC power source change notification
     let token = unsafe {
         let guid: GUID = GUID_ACDC_POWER_SOURCE.try_into()?;
         RegisterPowerSettingNotification(HANDLE(hwnd.0), &guid, DEVICE_NOTIFY_WINDOW_HANDLE)?
     };
+    tokens.push(unsafe { Owned::new(token) });
+    // Register battery percentage change notification
+    let token = unsafe {
+        let guid: GUID = GUID_BATTERY_PERCENTAGE_REMAINING.try_into()?;
+        RegisterPowerSettingNotification(HANDLE(hwnd.0), &guid, DEVICE_NOTIFY_WINDOW_HANDLE)?
+    };
+    tokens.push(unsafe { Owned::new(token) });
 
-    Ok(Guard {
-        hwnd,
-        token: Some(unsafe { Owned::new(token) }),
-    })
+    Ok(Guard { hwnd, tokens })
 }
 
 /// Get the current power state of the system.
