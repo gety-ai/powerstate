@@ -103,7 +103,7 @@ pub fn get_current_power_state() -> Result<Status, crate::Error> {
     let estimated_energy_percentage = if power_status.BatteryLifePercent == u8::MAX {
         None
     } else {
-        Some(power_status.BatteryLifePercent as f32 / 100.0)
+        Some(power_status.BatteryLifePercent)
     };
     let estimated_time_remaining = if power_status.BatteryFullLifeTime != u32::MAX {
         Some(EstimatedTimeRemaining::Charging(Duration::from_secs(
