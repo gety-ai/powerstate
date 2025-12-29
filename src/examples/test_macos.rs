@@ -7,6 +7,7 @@ use powerstate::register_power_state_change_callback;
 
 #[cfg(target_os = "macos")]
 fn main() {
+    simple_logging::log_to_stderr(log::LevelFilter::Trace);
     let mtm = MainThreadMarker::new().unwrap();
     let guard = register_power_state_change_callback(mtm, |status| {
         println!("{:?}", status);

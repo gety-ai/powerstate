@@ -28,7 +28,8 @@ pub enum EstimatedTimeRemaining {
 #[derive(Debug, Default, Clone)]
 pub struct Status {
     pub power_state: PowerState,
-    pub estimated_energy_percentage: Option<f32>,
+    /// Estimated energy percentage, in range [0, 100].
+    pub estimated_energy_percentage: Option<u8>,
     pub estimated_time_remaining: Option<EstimatedTimeRemaining>,
     pub batteries: Vec<BatteryInfo>,
     /// Whether the system is in power saving mode.

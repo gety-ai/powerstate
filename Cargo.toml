@@ -13,11 +13,15 @@ name = "test_windows"
 path = "src/examples/test_windows.rs"
 harness = false
 
+[dev-dependencies]
+simple-logging = "2.0.2"
+
 [dependencies]
 log = "0.4"
 thiserror = "2"
 oneshot = "0.1"
 starship-battery = "0.10"
+strum = { version = "0.27", features = ["derive"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = [
