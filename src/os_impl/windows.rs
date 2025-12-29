@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use windows::{
     Win32::{
         Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM},
@@ -18,7 +20,9 @@ use windows::{
     core::{GUID, Owned, PCWSTR, w},
 };
 
-use crate::{OnPowerStateChange, PowerState, Status};
+use crate::{
+    EstimatedTimeRemaining, OnPowerStateChange, PowerState, Status, batteries::get_batteries,
+};
 
 const GUID_ACDC_POWER_SOURCE: &str = "5D3E9A59-E9D5-4B00-A6BD-FF34FF516548";
 
@@ -96,7 +100,31 @@ pub fn get_current_power_state() -> Result<Status, crate::Error> {
         GetSystemPowerStatus(&mut power_status)?;
     }
 
+    let estimated_energy_percentage = if power_status.BatteryLifePercent == u8::MAX {
+        None
+    } else {
+        Some(power_status.BatteryLifePercent as f32 / 100.0)
+    };
+    let estimated_time_remaining = if power_status.BatteryFullLifeTime != u32::MAX {
+        Some(EstimatedTimeRemaining::Charging(Duration::from_secs(
+            power_status.BatteryFullLifeTime as u64,
+        )))
+    } else if power_status.BatteryLifeTime != u32::MAX {
+        Some(EstimatedTimeRemaining::Discharging(Duration::from_secs(
+            power_status.BatteryLifeTime as u64,
+        )))
+    } else {
+        None
+    };
+
+    let batteries = get_batteries()
+        .inspect_err(|e| log::warn!("Unable to access battery information: {e}"))
+        .unwrap_or_default();
+
     Ok(Status {
+        estimated_energy_percentage,
+        estimated_time_remaining,
+        batteries,
         power_state: match power_status.ACLineStatus {
             0 => PowerState::Battery,
             1 => PowerState::AC,

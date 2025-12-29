@@ -1,4 +1,8 @@
+use std::time::Duration;
+mod batteries;
 mod os_impl;
+
+pub use batteries::{BatteryInfo, BatteryState, BatteryTechnology};
 
 pub use os_impl::*;
 
@@ -15,9 +19,18 @@ pub enum Error {
     Linux,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone)]
+pub enum EstimatedTimeRemaining {
+    Charging(Duration),
+    Discharging(Duration),
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct Status {
     pub power_state: PowerState,
+    pub estimated_energy_percentage: Option<f32>,
+    pub estimated_time_remaining: Option<EstimatedTimeRemaining>,
+    pub batteries: Vec<BatteryInfo>,
     /// Whether the system is in power saving mode.
     ///
     /// In macos, this also called `Low Power Mode`
