@@ -1,4 +1,4 @@
-use std::{ffi::c_void, time::Duration};
+use std::{ffi::c_void, panic, ptr, time::Duration};
 
 use crate::{EstimatedTimeRemaining, PowerState, Status, batteries::get_batteries};
 
@@ -8,17 +8,23 @@ use objc2_core_foundation::{
     kCFRunLoopDefaultMode,
 };
 use objc2_io_kit::{
-    self, IOPSCopyPowerSourcesInfo, IOPSCopyPowerSourcesList, IOPSGetPowerSourceDescription,
+    IOPSCopyPowerSourcesInfo, IOPSCopyPowerSourcesList, IOPSGetPowerSourceDescription,
     IOPSNotificationCreateRunLoopSource,
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Failed to query power source information")]
+    FailedToCopyPowerSourcesInfo,
+    #[error("Failed to query power source list")]
+    FailedToCopyPowerSourcesList,
     #[error("Failed to create run loop source")]
     FailedToCreateRunLoopSource,
     #[error("Missing run loop")]
     MissingRunLoop,
 }
+
+type PowerSourceDictionary = CFDictionary<CFString, objc2_core_foundation::CFType>;
 
 struct PowerSourceDescKey;
 #[allow(dead_code)]
@@ -80,144 +86,153 @@ impl From<PowerSourceState> for PowerState {
     }
 }
 
-fn get_power_source_state() -> Option<Status> {
-    let mut status = unsafe {
-        let blob = IOPSCopyPowerSourcesInfo()?;
-        let list = IOPSCopyPowerSourcesList(Some(&blob))?;
-        let count = list.count();
-        let mut i = 0;
-        // TODO: support non-battery devices, such as mac mini?
-        loop {
-            let ps = list.value_at_index(i);
+fn status_for_non_battery_device() -> Status {
+    Status {
+        // For desktops like Mac mini, power state should be treated as always plugged in.
+        power_state: PowerState::AC,
+        ..Status::default()
+    }
+}
 
-            let desc = IOPSGetPowerSourceDescription(Some(&blob), Some(&*(ps as *const CFType)));
-            if let Some(desc) = desc {
-                let desc: CFRetained<CFDictionary<CFString, objc2_core_foundation::CFType>> =
-                    CFRetained::cast_unchecked(desc);
-                // eprintln!("{desc:#?}");
+fn power_source_type(desc: &PowerSourceDictionary) -> Option<String> {
+    let power_source_type = CFString::from_static_str(PowerSourceDescKey::TYPE);
+    desc.get(power_source_type.as_ref())
+        .and_then(|value| value.downcast::<CFString>().ok())
+        .map(|value| value.to_string())
+}
 
-                // Pick first internal battery
-                let power_source_type = CFString::from_static_str(PowerSourceDescKey::TYPE);
-                if let Some(power_source_type) = desc.get(power_source_type.as_ref())
-                    && let Ok(power_source_type) = power_source_type.downcast::<CFString>()
-                {
-                    let power_source_type = power_source_type.to_string();
-                    if power_source_type != "InternalBattery" {
-                        i += 1;
-                        if i >= count {
-                            log::warn!("No internal battery found");
-                            break None;
-                        }
-                        continue;
-                    }
-                }
-
-                let power_source_state =
-                    CFString::from_static_str(PowerSourceDescKey::POWER_SOURCE_STATE);
-                let power_state: PowerState = if let Some(power_source_state) =
-                    desc.get(power_source_state.as_ref())
-                    && let Ok(power_source_state) = power_source_state.downcast::<CFString>()
-                {
-                    let power_source_state = power_source_state.to_string();
-                    match PowerSourceState::try_from(power_source_state.as_str()) {
-                        Ok(power_source_state) => power_source_state.into(),
-                        Err(_) => {
-                            log::warn!("Unknown power source state: {power_source_state}");
-                            PowerState::Unknown
-                        }
-                    }
-                } else {
-                    PowerState::Unknown
-                };
-
-                let current_capacity =
-                    CFString::from_static_str(PowerSourceDescKey::CURRENT_CAPACITY);
-                let estimated_energy_percentage = if let Some(current_capacity) =
-                    desc.get(current_capacity.as_ref())
-                    && let Ok(current_capacity) = current_capacity.downcast::<CFNumber>()
-                    && let Some(current_capacity) = current_capacity.as_i8()
-                {
-                    #[allow(clippy::manual_range_contains)]
-                    if current_capacity >= 0 && current_capacity <= 100 {
-                        Some(current_capacity as u8)
-                    } else {
-                        log::warn!("Current capacity is out of range: {current_capacity}");
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                let time_to_full_charge =
-                    CFString::from_static_str(PowerSourceDescKey::TIME_TO_FULL_CHARGE);
-                let time_to_empty = CFString::from_static_str(PowerSourceDescKey::TIME_TO_EMPTY);
-                let mut estimated_time_remaining = None;
-                if let Some(time_to_full_charge) = desc.get(time_to_full_charge.as_ref())
-                    && let Ok(time_to_full_charge) = time_to_full_charge.downcast::<CFNumber>()
-                {
-                    if let Some(time_to_full_charge) = time_to_full_charge.as_i32() {
-                        if time_to_full_charge > 0 {
-                            estimated_time_remaining = Some(EstimatedTimeRemaining::Charging(
-                                Duration::from_secs(time_to_full_charge as u64 * 60),
-                            ));
-                        }
-                    } else {
-                        log::warn!("Time to full charge is not a i32 : {time_to_full_charge:?}");
-                    }
-                }
-                if let Some(time_to_empty) = desc.get(time_to_empty.as_ref())
-                    && let Ok(time_to_empty) = time_to_empty.downcast::<CFNumber>()
-                {
-                    if let Some(time_to_empty) = time_to_empty.as_i32() {
-                        if time_to_empty > 0 {
-                            estimated_time_remaining = Some(EstimatedTimeRemaining::Discharging(
-                                Duration::from_secs(time_to_empty as u64 * 60),
-                            ));
-                        }
-                    } else {
-                        log::warn!("Time to empty is not a i32 : {time_to_empty:?}");
-                    }
-                }
-
-                let lpm_active = CFString::from_static_str(PowerSourceDescKey::LPM_ACTIVE);
-                let power_saving_mode = if let Some(lpm_active) = desc.get(lpm_active.as_ref())
-                    && let Ok(lpm_active) = lpm_active.downcast::<CFNumber>()
-                    && lpm_active.as_isize() == Some(1)
-                {
-                    true
-                } else {
-                    false
-                };
-
-                break Some(Status {
-                    power_state,
-                    estimated_energy_percentage,
-                    estimated_time_remaining,
-                    power_saving_mode,
-                    batteries: vec![],
-                });
-            }
+fn parse_power_source_status(desc: &PowerSourceDictionary) -> Status {
+    let power_source_state = CFString::from_static_str(PowerSourceDescKey::POWER_SOURCE_STATE);
+    let power_state: PowerState = if let Some(power_source_state) =
+        desc.get(power_source_state.as_ref())
+        && let Ok(power_source_state) = power_source_state.downcast::<CFString>()
+    {
+        let power_source_state = power_source_state.to_string();
+        match PowerSourceState::try_from(power_source_state.as_str()) {
+            Ok(power_source_state) => power_source_state.into(),
+            Err(_) => PowerState::Unknown,
         }
-        .unwrap_or_default()
+    } else {
+        PowerState::Unknown
     };
 
-    let batteries = get_batteries()
-        .inspect_err(|e| log::warn!("Unable to access battery information: {e}"))
-        .unwrap_or_default();
-    status.batteries = batteries;
-    Some(status)
+    let current_capacity = CFString::from_static_str(PowerSourceDescKey::CURRENT_CAPACITY);
+    let estimated_energy_percentage = if let Some(current_capacity) =
+        desc.get(current_capacity.as_ref())
+        && let Ok(current_capacity) = current_capacity.downcast::<CFNumber>()
+        && let Some(current_capacity) = current_capacity.as_i8()
+    {
+        #[allow(clippy::manual_range_contains)]
+        if current_capacity >= 0 && current_capacity <= 100 {
+            Some(current_capacity as u8)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let time_to_full_charge = CFString::from_static_str(PowerSourceDescKey::TIME_TO_FULL_CHARGE);
+    let time_to_empty = CFString::from_static_str(PowerSourceDescKey::TIME_TO_EMPTY);
+    let mut estimated_time_remaining = None;
+    if let Some(time_to_full_charge) = desc.get(time_to_full_charge.as_ref())
+        && let Ok(time_to_full_charge) = time_to_full_charge.downcast::<CFNumber>()
+    {
+        if let Some(time_to_full_charge) = time_to_full_charge.as_i32() {
+            if time_to_full_charge > 0 {
+                estimated_time_remaining = Some(EstimatedTimeRemaining::Charging(
+                    Duration::from_secs(time_to_full_charge as u64 * 60),
+                ));
+            }
+        }
+    }
+    if let Some(time_to_empty) = desc.get(time_to_empty.as_ref())
+        && let Ok(time_to_empty) = time_to_empty.downcast::<CFNumber>()
+    {
+        if let Some(time_to_empty) = time_to_empty.as_i32() {
+            if time_to_empty > 0 {
+                estimated_time_remaining = Some(EstimatedTimeRemaining::Discharging(
+                    Duration::from_secs(time_to_empty as u64 * 60),
+                ));
+            }
+        }
+    }
+
+    let lpm_active = CFString::from_static_str(PowerSourceDescKey::LPM_ACTIVE);
+    let power_saving_mode = if let Some(lpm_active) = desc.get(lpm_active.as_ref())
+        && let Ok(lpm_active) = lpm_active.downcast::<CFNumber>()
+        && lpm_active.as_isize() == Some(1)
+    {
+        true
+    } else {
+        false
+    };
+
+    Status {
+        power_state,
+        estimated_energy_percentage,
+        estimated_time_remaining,
+        power_saving_mode,
+        batteries: vec![],
+    }
+}
+
+fn get_power_source_state() -> Result<Status, Error> {
+    unsafe {
+        let blob = IOPSCopyPowerSourcesInfo().ok_or(Error::FailedToCopyPowerSourcesInfo)?;
+        let list =
+            IOPSCopyPowerSourcesList(Some(&blob)).ok_or(Error::FailedToCopyPowerSourcesList)?;
+        let count = list.count();
+        if count == 0 {
+            return Ok(status_for_non_battery_device());
+        }
+
+        let mut fallback_status = None;
+        for i in 0..count {
+            let ps = list.value_at_index(i as _);
+            if ps.is_null() {
+                continue;
+            }
+
+            let desc = IOPSGetPowerSourceDescription(Some(&blob), Some(&*(ps as *const CFType)));
+            let Some(desc) = desc else {
+                continue;
+            };
+            let desc: CFRetained<PowerSourceDictionary> = CFRetained::cast_unchecked(desc);
+            let source_type = power_source_type(&desc);
+            let status = parse_power_source_status(&desc);
+
+            if source_type.as_deref() == Some("InternalBattery") {
+                return Ok(status);
+            }
+            if fallback_status.is_none() {
+                fallback_status = Some(status);
+            }
+        }
+
+        if let Some(status) = fallback_status {
+            Ok(status)
+        } else {
+            Ok(status_for_non_battery_device())
+        }
+    }
 }
 
 pub struct Guard {
     _mtm: MainThreadMarker,
+    run_loop: CFRetained<CFRunLoop>,
     source: CFRetained<CFRunLoopSource>,
+    context_ptr: *mut Context,
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
         unsafe {
-            if let Some(run_loop) = CFRunLoop::current() {
-                run_loop.remove_source(Some(&self.source), kCFRunLoopDefaultMode);
+            self.run_loop
+                .remove_source(Some(&self.source), kCFRunLoopDefaultMode);
+            if !self.context_ptr.is_null() {
+                let _ = Box::from_raw(self.context_ptr);
+                self.context_ptr = ptr::null_mut();
             }
         }
     }
@@ -228,12 +243,20 @@ struct Context {
 }
 
 pub fn get_current_power_state() -> Result<Status, crate::Error> {
-    Ok(get_power_source_state().unwrap_or_default())
+    let mut status = get_power_source_state()?;
+    if let Ok(batteries) = get_batteries() {
+        status.batteries = batteries;
+    }
+    Ok(status)
 }
 
 unsafe extern "C-unwind" fn on_power_state_change(context: *mut c_void) {
-    let context = context as *mut Context;
-    unsafe { ((*context).callback)(get_current_power_state()) };
+    if context.is_null() {
+        return;
+    }
+    let context = unsafe { &*(context as *const Context) };
+    let status = get_current_power_state();
+    let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| (context.callback)(status)));
 }
 
 // TODO: implement LPM callback support?
@@ -253,10 +276,18 @@ where
         let source = IOPSNotificationCreateRunLoopSource(
             Some(on_power_state_change),
             context_ptr as *mut c_void,
-        )
-        .ok_or(Error::FailedToCreateRunLoopSource)?;
+        );
+        let Some(source) = source else {
+            let _ = Box::from_raw(context_ptr);
+            return Err(Error::FailedToCreateRunLoopSource.into());
+        };
 
         run_loop.add_source(Some(&source), kCFRunLoopDefaultMode);
-        Ok(Guard { _mtm: mtm, source })
+        Ok(Guard {
+            _mtm: mtm,
+            run_loop,
+            source,
+            context_ptr,
+        })
     }
 }

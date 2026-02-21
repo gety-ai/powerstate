@@ -3,12 +3,13 @@ use crate::Status;
 pub struct Guard;
 
 pub fn get_current_power_state() -> Result<Status, crate::Error> {
-    todo!();
+    Err(crate::Error::Linux)
 }
 
 pub fn register_power_state_change_callback<F>(cb: F) -> Result<Guard, crate::Error>
 where
     F: Fn(Result<Status, crate::Error>) + Send + Sync + 'static,
 {
-    todo!();
+    let _ = cb;
+    Err(crate::Error::Linux)
 }

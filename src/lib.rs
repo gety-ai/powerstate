@@ -8,6 +8,10 @@ pub use os_impl::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("failed to spawn callback thread: {0}")]
+    CallbackThreadSpawnFailed(#[source] std::io::Error),
+    #[error("failed to receive callback registration result: {0}")]
+    CallbackRegistrationChannelClosed(#[from] oneshot::RecvError),
     #[cfg(target_os = "windows")]
     #[error(transparent)]
     Windows(#[from] windows::core::Error),
@@ -54,7 +58,11 @@ mod tests {
 
     #[test]
     fn test_get_current_power_state() {
-        let status = get_current_power_state().unwrap();
-        println!("{status:#?}");
+        let status = get_current_power_state();
+        #[cfg(target_os = "linux")]
+        assert!(matches!(status, Err(Error::Linux)));
+
+        #[cfg(not(target_os = "linux"))]
+        println!("{:#?}", status.unwrap());
     }
 }

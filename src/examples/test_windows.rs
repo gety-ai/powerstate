@@ -3,7 +3,7 @@ use powerstate::register_power_state_change_callback;
 
 #[cfg(target_os = "windows")]
 fn main() {
-    let guard = register_power_state_change_callback(|status| {
+    let _guard = register_power_state_change_callback(|status| {
         println!("{status:#?}");
     })
     .unwrap();

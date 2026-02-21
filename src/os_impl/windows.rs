@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{panic, time::Duration};
 
 use windows::{
     Win32::{
@@ -12,12 +12,13 @@ use windows::{
         },
         UI::WindowsAndMessaging::{
             CREATESTRUCTW, CreateWindowExW, DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW,
-            DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW, HWND_MESSAGE,
-            PostMessageW, RegisterClassW, SetWindowLongPtrW, TranslateMessage, WINDOW_EX_STYLE,
-            WINDOW_STYLE, WM_CREATE, WM_DESTROY, WM_POWERBROADCAST, WNDCLASSW,
+            DestroyWindow, DispatchMessageW, GWLP_USERDATA, GetMessageW, GetWindowLongPtrW,
+            HWND_MESSAGE, PostMessageW, PostQuitMessage, RegisterClassW, SetWindowLongPtrW,
+            TranslateMessage, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CREATE, WM_DESTROY,
+            WM_POWERBROADCAST, WNDCLASSW,
         },
     },
-    core::{GUID, Owned, PCWSTR, w},
+    core::{GUID, HRESULT, Owned, PCWSTR, w},
 };
 
 use crate::{
@@ -27,6 +28,7 @@ use crate::{
 // Ref: https://learn.microsoft.com/en-us/windows/win32/power/power-setting-guids
 const GUID_ACDC_POWER_SOURCE: &str = "5D3E9A59-E9D5-4B00-A6BD-FF34FF516548";
 const GUID_BATTERY_PERCENTAGE_REMAINING: &str = "A7AD8041-B45A-4CAE-87A3-EECBB468A9E1";
+const ERROR_CLASS_ALREADY_EXISTS: u32 = 1410;
 
 pub struct Guard {
     hwnd: HWND,
@@ -51,8 +53,7 @@ struct Context {
     callback: OnPowerStateChange,
 }
 
-fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<Guard> {
-    let hinst = unsafe { GetModuleHandleW(None)? };
+fn register_window_class(hinst: windows::Win32::Foundation::HMODULE) -> windows::core::Result<()> {
     let wc = WNDCLASSW {
         lpfnWndProc: Some(wnd_proc),
         hInstance: hinst.into(),
@@ -60,14 +61,25 @@ fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<G
         ..Default::default()
     };
 
+    let ret = unsafe { RegisterClassW(&wc) };
+    if ret == 0 {
+        let err = windows::core::Error::from_thread();
+        if err.code() != HRESULT::from_win32(ERROR_CLASS_ALREADY_EXISTS) {
+            return Err(err);
+        }
+    }
+
+    Ok(())
+}
+
+fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<Guard> {
+    let hinst = unsafe { GetModuleHandleW(None)? };
+    register_window_class(hinst)?;
+
     let ctx = Box::new(Context { callback: cb });
     let ctx_ptr = Box::into_raw(ctx);
 
-    let hwnd = unsafe {
-        let ret = RegisterClassW(&wc);
-        if ret == 0 {
-            Err(windows::core::Error::from_thread())?;
-        }
+    let hwnd = match unsafe {
         CreateWindowExW(
             WINDOW_EX_STYLE(0),
             CLASS,
@@ -81,23 +93,63 @@ fn create_message_only_window(cb: OnPowerStateChange) -> windows::core::Result<G
             None,
             Some(hinst.into()),
             Some(ctx_ptr as *const _),
-        )?
+        )
+    } {
+        Ok(hwnd) => hwnd,
+        Err(e) => {
+            unsafe {
+                let _ = Box::from_raw(ctx_ptr);
+            }
+            return Err(e);
+        }
     };
 
     let mut tokens = Vec::new();
 
     // Register AC/DC power source change notification
-    let token = unsafe {
-        let guid: GUID = GUID_ACDC_POWER_SOURCE.try_into()?;
-        RegisterPowerSettingNotification(HANDLE(hwnd.0), &guid, DEVICE_NOTIFY_WINDOW_HANDLE)?
+    let guid: GUID = match GUID_ACDC_POWER_SOURCE.try_into() {
+        Ok(guid) => guid,
+        Err(e) => {
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            return Err(e);
+        }
     };
-    tokens.push(unsafe { Owned::new(token) });
+    let token = match unsafe {
+        RegisterPowerSettingNotification(HANDLE(hwnd.0), &guid, DEVICE_NOTIFY_WINDOW_HANDLE)
+    } {
+        Ok(token) => unsafe { Owned::new(token) },
+        Err(e) => {
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            return Err(e);
+        }
+    };
+    tokens.push(token);
     // Register battery percentage change notification
-    let token = unsafe {
-        let guid: GUID = GUID_BATTERY_PERCENTAGE_REMAINING.try_into()?;
-        RegisterPowerSettingNotification(HANDLE(hwnd.0), &guid, DEVICE_NOTIFY_WINDOW_HANDLE)?
+    let guid: GUID = match GUID_BATTERY_PERCENTAGE_REMAINING.try_into() {
+        Ok(guid) => guid,
+        Err(e) => {
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            return Err(e);
+        }
     };
-    tokens.push(unsafe { Owned::new(token) });
+    let token = match unsafe {
+        RegisterPowerSettingNotification(HANDLE(hwnd.0), &guid, DEVICE_NOTIFY_WINDOW_HANDLE)
+    } {
+        Ok(token) => unsafe { Owned::new(token) },
+        Err(e) => {
+            unsafe {
+                let _ = DestroyWindow(hwnd);
+            }
+            return Err(e);
+        }
+    };
+    tokens.push(token);
 
     Ok(Guard { hwnd, tokens })
 }
@@ -126,9 +178,7 @@ pub fn get_current_power_state() -> Result<Status, crate::Error> {
         None
     };
 
-    let batteries = get_batteries()
-        .inspect_err(|e| log::warn!("Unable to access battery information: {e}"))
-        .unwrap_or_default();
+    let batteries = get_batteries().unwrap_or_default();
 
     Ok(Status {
         estimated_energy_percentage,
@@ -144,7 +194,6 @@ pub fn get_current_power_state() -> Result<Status, crate::Error> {
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    log::debug!("wnd_proc: {msg:#x}");
     match msg {
         WM_CREATE => unsafe {
             let createstruct = &*(lparam.0 as *const CREATESTRUCTW);
@@ -153,17 +202,17 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
         WM_POWERBROADCAST => unsafe {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Context;
             if ptr.is_null() {
-                log::error!("GetWindowLongPtrW returned null");
-            } else {
-                let status = get_current_power_state();
-                ((*ptr).callback)(status);
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
             }
+            let status = get_current_power_state();
+            let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| ((*ptr).callback)(status)));
         },
         WM_DESTROY => unsafe {
             let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut Context;
             if !ptr.is_null() {
                 let _ = Box::from_raw(ptr);
             }
+            PostQuitMessage(0);
         },
         _ => (),
     }
@@ -176,24 +225,34 @@ where
     F: Fn(Result<Status, crate::Error>) + Send + Sync + 'static,
 {
     let (tx, rx) = oneshot::channel();
-    std::thread::spawn(move || {
-        match create_message_only_window(Box::new(cb)) {
-            Ok(guard) => {
-                let _ = tx.send(Ok(guard));
+    std::thread::Builder::new()
+        .name("powerstate-windows-loop".to_string())
+        .spawn(move || {
+            match create_message_only_window(Box::new(cb)) {
+                Ok(guard) => {
+                    let _ = tx.send(Ok(guard));
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e.into()));
+                    return;
+                }
             }
-            Err(e) => {
-                let _ = tx.send(Err(e.into()));
-            }
-        }
 
-        unsafe {
-            let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).into() {
-                let _ = TranslateMessage(&msg);
-                let _ = DispatchMessageW(&msg);
+            unsafe {
+                let mut msg = windows::Win32::UI::WindowsAndMessaging::MSG::default();
+                loop {
+                    match GetMessageW(&mut msg, None, 0, 0).0 {
+                        -1 => break,
+                        0 => break,
+                        _ => {
+                            let _ = TranslateMessage(&msg);
+                            let _ = DispatchMessageW(&msg);
+                        }
+                    }
+                }
             }
-        }
-    });
+        })
+        .map_err(crate::Error::CallbackThreadSpawnFailed)?;
 
-    rx.recv().unwrap()
+    rx.recv().map_err(crate::Error::from)?
 }
