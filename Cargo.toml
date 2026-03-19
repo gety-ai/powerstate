@@ -13,6 +13,11 @@ name = "test_windows"
 path = "src/examples/test_windows.rs"
 harness = false
 
+[[example]]
+name = "test_linux"
+path = "src/examples/test_linux.rs"
+harness = false
+
 [dev-dependencies]
 simple-logging = "2.0.2"
 
