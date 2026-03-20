@@ -1,6 +1,6 @@
 [package]
 name = "powerstate"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 
 [[example]]
@@ -11,6 +11,11 @@ harness = false
 [[example]]
 name = "test_windows"
 path = "src/examples/test_windows.rs"
+harness = false
+
+[[example]]
+name = "test_linux"
+path = "src/examples/test_linux.rs"
 harness = false
 
 [dev-dependencies]

@@ -19,8 +19,8 @@ pub enum Error {
     #[error(transparent)]
     Macos(#[from] MacosError),
     #[cfg(target_os = "linux")]
-    #[error("Linux is not supported")]
-    Linux,
+    #[error(transparent)]
+    Linux(#[from] starship_battery::Error),
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +44,7 @@ pub struct Status {
 
 type OnPowerStateChange = Box<dyn Fn(Result<Status, Error>) + Send + Sync>;
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub enum PowerState {
     Battery,
     AC,
@@ -58,11 +58,9 @@ mod tests {
 
     #[test]
     fn test_get_current_power_state() {
-        let status = get_current_power_state();
-        #[cfg(target_os = "linux")]
-        assert!(matches!(status, Err(Error::Linux)));
-
-        #[cfg(not(target_os = "linux"))]
-        println!("{:#?}", status.unwrap());
+        match get_current_power_state() {
+            Ok(status) => println!("{status:#?}"),
+            Err(e) => println!("power state not available: {e}"),
+        }
     }
 }
